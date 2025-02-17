@@ -104,4 +104,4 @@ class ASS:
 
 if __name__ == '__main__':
     ass_parser = ASS(r'./test/test.ass')
-    print()
+    pass
