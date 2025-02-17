@@ -1,18 +1,41 @@
 from typing import Union
+from dataclasses import dataclass
+from utils import *
 import pathlib
 import _io
 import os.path
 import re
 
 
+@dataclass
+class ScriptInformation:
+    Title = None
+    OriginalScript = None
+    OriginalTranslation = None
+    OriginalEditing = None
+    OriginalTiming = None
+    ScriptUpdatedBy = None
+    UpdateDetails = None
+
+
 class ASS:
+    ScriptType = 'v4.00+'
+    WrapStyle = 0
+    ScaledBorderAndShadow = True
+    YCbCrMatrix = None
+    PlayResX = 1920
+    PlayResY = 1080
+    Information = ScriptInformation
+    UnknownScriptInfo = {}
+
     def __init__(
             self,
             ass: Union[str, pathlib.Path, _io.TextIOWrapper],
             encoding: str = 'utf-8-sig'
     ):
         if isinstance(ass, str):
-            if os.path.exists(ass):
+            if re.match(r'^(?:(?:[a-zA-Z]:|\.{1,2})?[\\/](?:[^\\?/*|<>:"]+[\\/])*)'
+                        r'(?:(?:[^\\?/*|<>:"]+?)(?:\.[^.\\?/*|<>:"]+)?)?$', ass):
                 ass = pathlib.Path(ass)
             else:
                 ass_content = ass
@@ -23,15 +46,8 @@ class ASS:
             ass.close()
         ass_lines = iter(re.split(r'\r?\n', ass_content))
 
-        # for line in iter(re.split(r'\r?\n', ass_content)):
-        #     line = line.strip()
-        #     section_name = re.findall(r'^\[(.*)]$', line)
-        #     if section_name:
-        #         section_name = section_name[0]
-        #         continue
-
         section_name = None
-        for line in iter(re.split(r'\r?\n', ass_lines)):
+        for line in iter(ass_lines):
             if section_name:
                 section_name = section_name[0]
                 if section_name == 'Script Info':
@@ -62,7 +78,16 @@ class ASS:
 
     def __script_info_parser(self, ass_line: str):
         header, value = re.split(r'\s*:\s*', ass_line, maxsplit=1)
-        self.__setattr__(header, value)
+        if header == 'WrapStyle':
+            self.wrapStyle = int(value)
+        elif header == 'ScaledBorderAndShadow':
+            self.scaledBorderAndShadow = False if value == 'no' else True
+        elif header in ['ScriptType', 'YCbCr Matrix']:
+            setattr(self, header, value)
+        elif header in ['LayoutResX', 'LayoutResY', 'PlayResX', 'PlayResY']:
+            setattr(self, header, int(value))
+        elif header in InformationHeaders:
+            setattr(self.Information, re.sub(r'\s', '', header), value)
 
     def __styles_parser(self, ass_line: str):
         pass  # TODO
@@ -78,5 +103,5 @@ class ASS:
 
 
 if __name__ == '__main__':
-    ass_parser = ASS(r'../test.ass')
+    ass_parser = ASS(r'./test/test.ass')
     print()
