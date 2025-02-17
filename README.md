@@ -1,5 +1,5 @@
-# WARNING
+You are now in`dev` branch. 
 
-### The Project Is Still Developing.
+This is the branch for developing.
 
-### DO NOT Use It In Developing Environment Until The First Stable Version Released.
+The intact should be found in `master` branch. 
