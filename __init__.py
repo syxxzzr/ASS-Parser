@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, Optional
 from dataclasses import dataclass
 from utils import *
 import pathlib
@@ -8,22 +8,87 @@ import re
 
 @dataclass
 class ScriptInformation:
-    Title = None
-    OriginalScript = None
-    OriginalTranslation = None
-    OriginalEditing = None
-    OriginalTiming = None
-    ScriptUpdatedBy = None
-    UpdateDetails = None
+    Title: str = None
+    OriginalScript: str = None
+    OriginalTranslation: str = None
+    OriginalEditing: str = None
+    OriginalTiming: str = None
+    ScriptUpdatedBy: str = None
+    UpdateDetails: str = None
+
+
+@dataclass
+class Colour:
+    R: int = 255
+    G: int = 255
+    B: int = 255
+    Alpha: float = 1
+
+    def __init__(
+            self, *args,
+            colourcode: Optional[str] = None,
+            r: Optional[int] = None,
+            g: Optional[int] = None,
+            b: Optional[int] = None,
+            alpha: Optional[float] = 1
+    ):
+        if colourcode is not None:
+            colour = self._parse_colourcode(colourcode)
+        elif r is not None and g is not None and b is not None:
+            colour = (alpha, r, g, b)
+        else:
+            colour = []
+            for arg in args:
+                if isinstance(arg, str):
+                    colour = self._parse_colourcode(arg)
+                    break
+                elif isinstance(arg, int):
+                    colour.append(arg)
+            else:
+                if len(colour) == 3:
+                    colour.insert(0, 1)
+                elif len(colour) >= 4:
+                    colour = [colour[1:5]].append(colour[0])
+                else:
+                    colour = (self.Alpha, self.R, self.G, self.B)
+        self.Alpha, self.R, self.G, self.B = colour
+
+    def _parse_colourcode(self, colourcode: Optional[str] = ''):
+        primary_colours = re.findall(r'^&?H?([0-9A-F]{2}){3,4}&?$', colourcode)  # TODO: need to check
+        colours = [self.Alpha, self.R, self.G, self.B]
+        if len(primary_colours) == 4:
+            colours[0] = int(primary_colours.pop(0), 16) / 255
+        if len(primary_colours) == 3:
+            colours[1], colours[2], colours[3] = [int(primary_colour, 16) for primary_colour in primary_colours]
+        return tuple(colours)
 
 
 @dataclass
 class Style:
-    Name = 'Default'
-    FontName = 'Arial'
-    Fontsize = 10
-    # TODO: more another default value
-    UnknownFormat = {}
+    Name: str = 'Default',
+    Fontname: str = 'Arial',
+    Fontsize: int = 20,
+    PrimaryColour: Colour = Colour(),
+    SecondaryColour: Colour = Colour(),
+    OutlineColour: Colour = Colour(),
+    BackColour: Colour = Colour(),
+    Bold: bool = False,
+    Italic: bool = False
+    Underline: bool = False
+    StrikeOut: bool = False
+    ScaleX: float = 100.
+    ScaleY: float = 100.
+    Spacing: float = 0.
+    Angle: float = 0.
+    BorderStyle: int = 1
+    Outline: float = 2.
+    Shadow: float = 2.
+    Alignment: int = 2
+    MarginL: int = 10
+    MarginR: int = 10
+    MarginV: int = 10
+    Encoding: int = 1
+    UnknownFormat = dict()
 
     def __init__(self, style_content, style_formats):
         for style_format, style in zip(style_formats, style_content):
@@ -31,22 +96,32 @@ class Style:
                 self.UnknownFormat[style_format] = style
                 continue
 
-            # TODO: parse format value
-            if style_format in []:
+            if (
+                    style_format == StyleFormats[16] or
+                    style_format in StyleFormats[18:]
+            ):
                 style = int(style)
-            elif style_format in []:
+            elif (
+                    style_format == StyleFormats[2] or
+                    style_format in StyleFormats[11: 15] or
+                    style_format in StyleFormats[16: 18]
+            ):
+                style = float(style)
+            elif style_format in StyleFormats[7: 11]:
                 style = bool(style)
+            elif style_format in StyleFormats[3: 7]:
+                style = Colour(style)
             setattr(self, style_format, style)
 
 
 class ASS:
-    ScriptType = 'v4.00+'
-    WrapStyle = 0
-    ScaledBorderAndShadow = True
-    YCbCrMatrix = None
-    PlayResX = 1920
-    PlayResY = 1080
-    Information = ScriptInformation
+    ScriptType: str = 'v4.00+'
+    WrapStyle: int = 0
+    ScaledBorderAndShadow: bool = True
+    YCbCrMatrix: str = None
+    PlayResX: int = 1920
+    PlayResY: int = 1080
+    Information: ScriptInformation = ScriptInformation()
     UnknownScriptInfo = {}
 
     Styles = {}
