@@ -1,4 +1,4 @@
-from typing import Union, Optional
+from typing import Union, Optional, List, Tuple
 from dataclasses import dataclass
 from utils import *
 import pathlib
@@ -32,15 +32,19 @@ class Colour:
             b: Optional[int] = None,
             alpha: Optional[float] = 1
     ):
-        if colourcode is not None:
-            colour = self._parse_colourcode(colourcode)
-        elif r is not None and g is not None and b is not None:
+        if colourcode:
+            colour = self.parse_colourcode(colourcode)
+            if not colour:
+                return
+        elif r and g and b:
             colour = (alpha, r, g, b)
         else:
             colour = []
             for arg in args:
                 if isinstance(arg, str):
-                    colour = self._parse_colourcode(arg)
+                    colour = self.parse_colourcode(arg)
+                    if not colour:
+                        return
                     break
                 elif isinstance(arg, int):
                     colour.append(arg)
@@ -48,18 +52,21 @@ class Colour:
                 if len(colour) == 3:
                     colour.insert(0, 1)
                 elif len(colour) >= 4:
-                    colour = [colour[1:5]].append(colour[0])
+                    colour = [colour[4]].extend(colour[:4])
                 else:
-                    colour = (self.Alpha, self.R, self.G, self.B)
+                    return
         self.Alpha, self.R, self.G, self.B = colour
 
-    def _parse_colourcode(self, colourcode: Optional[str] = ''):
-        primary_colours = re.findall(r'^&?H?([0-9A-F]{2}){3,4}&?$', colourcode)  # TODO: need to check
-        colours = [self.Alpha, self.R, self.G, self.B]
-        if len(primary_colours) == 4:
-            colours[0] = int(primary_colours.pop(0), 16) / 255
-        if len(primary_colours) == 3:
-            colours[1], colours[2], colours[3] = [int(primary_colour, 16) for primary_colour in primary_colours]
+    @staticmethod
+    def parse_colourcode(colourcode: str) -> Optional[tuple]:
+        primary_colours = re.findall(r'^&?H?((?:[0-9A-F]{2}){3,4})&?$', colourcode)
+        if not primary_colours:
+            return None
+        primary_colours = list(primary_colours[0])
+        alpha = 1 if len(primary_colours) == 6 else int(primary_colours.pop(0) + primary_colours.pop(0), 16) / 255
+        colours = [alpha, ]
+        for i in range(3):
+            colours.append(int(primary_colours.pop(0) + primary_colours.pop(0), 16))
         return tuple(colours)
 
 
@@ -97,7 +104,7 @@ class Style:
                 continue
 
             if (
-                    style_format == StyleFormats[16] or
+                    style_format == StyleFormats[15] or
                     style_format in StyleFormats[18:]
             ):
                 style = int(style)
@@ -112,6 +119,55 @@ class Style:
             elif style_format in StyleFormats[3: 7]:
                 style = Colour(style)
             setattr(self, style_format, style)
+
+
+@dataclass
+class TimeSegment:
+    Start: float = 0.
+    End: float = 0.
+
+    def __init__(
+            self, *args,
+            timecodes: Optional[Union[List[str], Tuple[str]]] = None,
+            start: Optional[Union[int, float]] = None,
+            end: Optional[Union[int, float]] = None
+    ):
+        if timecodes:
+            time_segment = self.parse_timecode(timecodes)
+            if not time_segment:
+                return
+        elif start and end:
+            time_segment = (float(start), float(end))
+        else:
+            time_segment = []
+            for arg in args:
+                if isinstance(arg, (list, tuple)):
+                    time_segment = self.parse_timecode(arg)
+                    if not time_segment:
+                        return
+                    break
+                elif isinstance(arg, (int, float)):
+                    time_segment.append(float(arg))
+                    if len(time_segment) == 2:
+                        break
+            else:
+                return
+        self.Start, self.End = time_segment
+
+    @property
+    def Duration(self) -> float:
+        return self.End - self.Start
+
+    @staticmethod
+    def parse_timecode(timecodes: Union[List[str], Tuple[str]]) -> Optional[tuple]:
+        time_segment = []
+        for timecode in timecodes:
+            time_info = re.findall(r'^(\d):(\d\d):(\d\d).(\d\d)$', timecode)
+            if not time_info:
+                return None
+            hours, minutes, seconds, millie_seconds = time_info[0]
+            time_segment.append(float(3600 * int(hours) + 60 * int(minutes) + int(seconds) + 0.01 * int(millie_seconds)))
+        return tuple(time_segment)
 
 
 class ASS:
@@ -167,9 +223,12 @@ class ASS:
                 parser = self.__unknown_parser
 
             section_name = self.__parse_section(parser, ass_lines)
+            if not section_name:
+                delattr(self, '__format')
+                break
 
     @staticmethod
-    def __parse_section(parser, ass_lines: iter):
+    def __parse_section(parser, ass_lines: iter) -> Optional[str]:
         for line in ass_lines:
             line = re.sub(r'^\s*|\s*$', '', line)
             if not line or re.match(r'^[;|!]', line):
@@ -181,7 +240,7 @@ class ASS:
         return None
 
     def __script_info_parser(self, ass_line: str):
-        header, value = re.split(r'\s*:\s*', ass_line, maxsplit=1)
+        header, value = re.findall(r'(.+)\s*:\s*(.+)', ass_line)[0]
         if header == 'WrapStyle':
             self.wrapStyle = int(value)
         elif header == 'ScaledBorderAndShadow':
@@ -194,7 +253,7 @@ class ASS:
             setattr(self.Information, re.sub(r'\s', '', header), value)
 
     def __styles_parser(self, ass_line: str):
-        header, value = re.split(r'\s*:\s*', ass_line, maxsplit=1)
+        header, value = re.findall(r'(.+)\s*:\s*(.+)', ass_line)[0]
         value = re.findall(r'\s*([^,]+)\s*', value)
         if header == 'Format':
             self.__format = value
@@ -203,7 +262,12 @@ class ASS:
             self.Styles[style.Name] = style
 
     def __events_parser(self, ass_line: str):
-        pass  # TODO
+        header, value = re.findall(r'(.+)\s*:\s*(.+)', ass_line)[0]
+        value = re.findall(r'\s*([^,]+)\s*', value)
+        if header == 'Format':
+            self.__format = value
+        elif header == 'Dialogue':
+            pass  # TODO
 
     def __fonts_parser(self, ass_line: str):
         pass  # TODO
