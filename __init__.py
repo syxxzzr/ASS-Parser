@@ -1,4 +1,4 @@
-from typing import Union, Optional, List, Tuple
+from typing import Union, Optional, List, Tuple, Callable, Any
 from dataclasses import dataclass
 from utils import *
 import pathlib
@@ -39,7 +39,7 @@ class Colour:
         elif r and g and b:
             colour = (alpha, r, g, b)
         else:
-            colour = []
+            colour = list()
             for arg in args:
                 if isinstance(arg, str):
                     colour = self.parse_colourcode(arg)
@@ -97,8 +97,15 @@ class Style:
     Encoding: int = 1
     UnknownFormat = dict()
 
-    def __init__(self, style_content, style_formats):
-        for style_format, style in zip(style_formats, style_content):
+    def __init__(
+            self,
+            style_content: Optional[str] = None,
+            style_formats: Optional[Union[List[str], Tuple[str]]] = None
+    ):
+        if not (style_content and style_formats):
+            return
+        style_content = re.findall(r'\s*([^,]+)\s*', style_content)
+        for style, style_format in zip(style_content, style_formats):
             if style_format not in StyleFormats:
                 self.UnknownFormat[style_format] = style
                 continue
@@ -139,7 +146,7 @@ class TimeSegment:
         elif start and end:
             time_segment = (float(start), float(end))
         else:
-            time_segment = []
+            time_segment = list()
             for arg in args:
                 if isinstance(arg, (list, tuple)):
                     time_segment = self.parse_timecode(arg)
@@ -160,14 +167,72 @@ class TimeSegment:
 
     @staticmethod
     def parse_timecode(timecodes: Union[List[str], Tuple[str]]) -> Optional[tuple]:
-        time_segment = []
+        time_segment = list()
         for timecode in timecodes:
             time_info = re.findall(r'^(\d):(\d\d):(\d\d).(\d\d)$', timecode)
             if not time_info:
                 return None
             hours, minutes, seconds, millie_seconds = time_info[0]
-            time_segment.append(float(3600 * int(hours) + 60 * int(minutes) + int(seconds) + 0.01 * int(millie_seconds)))
+            time_segment.append(
+                float(3600 * int(hours) + 60 * int(minutes) + int(seconds) + 0.01 * int(millie_seconds)))
         return tuple(time_segment)
+
+
+class Text:
+    def __init__(self, text: Optional[str] = ''):
+        pass  # TODO
+
+
+@dataclass
+class __Event:
+    Layer: int = 0
+    TimeSegment: TimeSegment = TimeSegment()
+    Style: str = 'Default'
+    Name: str = ''
+    MarginL: int = 0
+    MarginR: int = 0
+    MarginV: int = 0
+    Effect: str = ''
+    Text: Text = Text()
+
+    UnknownFormat = dict()
+
+    def __init__(
+            self,
+            event_content: Optional[str] = None,
+            event_formats: Optional[Union[List[str], Tuple[str]]] = None
+    ):
+        if not (event_content and event_formats):
+            return
+        event_content = re.split(r',', event_content, maxsplit=len(event_formats) - 1)
+        time_segment = dict()
+        for event, event_format in zip(event_content, event_formats):
+            if event_format not in EventFormats:
+                self.UnknownFormat[event_format] = event
+                continue
+            if event_format == EventFormats[9]:
+                event = Text(event)
+            else:
+                event = re.sub(r'^\s*|\s*$', '', event)
+            if (
+                    event_format == EventFormats[0] or
+                    event_format in EventFormats[5: 8]
+            ):
+                event = int(event)
+            elif event_format in EventFormats[1: 3]:
+                time_segment[event_format] = event
+                continue
+            setattr(self, event_format, event)
+        if 'Start' in time_segment.keys() and 'End' in time_segment.keys():
+            self.TimeSegment = TimeSegment([time_segment['Start'], time_segment['End']])
+
+
+class Dialogue(__Event):
+    pass
+
+
+class Comment(__Event):
+    pass
 
 
 class ASS:
@@ -178,9 +243,10 @@ class ASS:
     PlayResX: int = 1920
     PlayResY: int = 1080
     Information: ScriptInformation = ScriptInformation()
-    UnknownScriptInfo = {}
+    UnknownScriptInfo = dict()
 
-    Styles = {}
+    Styles = {'Default': Style()}
+    Events = list()
 
     def __init__(
             self,
@@ -212,10 +278,10 @@ class ASS:
             if section_name == 'Script Info':
                 parser = self.__script_info_parser
             elif re.match(r'V4\+? Styles', section_name):
-                self.__format = StyleFormats
+                self.format = StyleFormats
                 parser = self.__styles_parser
             elif section_name == 'Events':
-                self.__format = EventFormats
+                self.format = EventFormats
                 parser = self.__events_parser
             elif section_name == 'Fonts':
                 parser = self.__fonts_parser
@@ -224,11 +290,12 @@ class ASS:
 
             section_name = self.__parse_section(parser, ass_lines)
             if not section_name:
-                delattr(self, '__format')
+                if hasattr(self, 'format'):
+                    delattr(self, 'format')
                 break
 
     @staticmethod
-    def __parse_section(parser, ass_lines: iter) -> Optional[str]:
+    def __parse_section(parser: Callable[[str], Any], ass_lines: iter) -> Optional[str]:
         for line in ass_lines:
             line = re.sub(r'^\s*|\s*$', '', line)
             if not line or re.match(r'^[;|!]', line):
@@ -240,7 +307,7 @@ class ASS:
         return None
 
     def __script_info_parser(self, ass_line: str):
-        header, value = re.findall(r'(.+)\s*:\s*(.+)', ass_line)[0]
+        header, value = re.split(r'\s*:\s*', ass_line, maxsplit=1)
         if header == 'WrapStyle':
             self.wrapStyle = int(value)
         elif header == 'ScaledBorderAndShadow':
@@ -253,21 +320,21 @@ class ASS:
             setattr(self.Information, re.sub(r'\s', '', header), value)
 
     def __styles_parser(self, ass_line: str):
-        header, value = re.findall(r'(.+)\s*:\s*(.+)', ass_line)[0]
-        value = re.findall(r'\s*([^,]+)\s*', value)
+        header, value = re.split(r'\s*:\s*', ass_line, maxsplit=1)
         if header == 'Format':
-            self.__format = value
+            self.format = re.findall(r'\s*([^,]+)\s*', value)
         elif header == 'Style':
-            style = Style(value, self.__format)
+            style = Style(value, self.format)
             self.Styles[style.Name] = style
 
     def __events_parser(self, ass_line: str):
-        header, value = re.findall(r'(.+)\s*:\s*(.+)', ass_line)[0]
-        value = re.findall(r'\s*([^,]+)\s*', value)
+        header, value = re.split(r'\s*:\s*', ass_line, maxsplit=1)
         if header == 'Format':
-            self.__format = value
+            self.format = re.findall(r'\s*([^,]+)\s*', value)
         elif header == 'Dialogue':
-            pass  # TODO
+            self.Events.append(Dialogue(value, self.format))
+        elif header == 'Comment':
+            self.Events.append(Comment(value, self.format))
 
     def __fonts_parser(self, ass_line: str):
         pass  # TODO
